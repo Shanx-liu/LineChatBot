@@ -1,0 +1,12 @@
+APScheduler>=3.11.3,<4
+fastapi>=0.141.1
+langchain-core>=1.6.10
+langchain-openai>=1.7.2
+langgraph>=1.2.15
+langgraph-checkpoint-sqlite>=3.1.2
+line-bot-sdk>=3.25.0
+openai>=3.16.2
+opencc-python-reimplemented>=0.1.7
+python-dotenv>=1.2.3
+sqlite-vec>=0.1.9
+uvicorn>=0.53.0
