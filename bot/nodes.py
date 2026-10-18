@@ -34,7 +34,19 @@ def _clean_reply(text: str) -> str:
             return m.group(0)
         return ""
 
-    return EMOJI_RE.sub(keep, text).strip()
+    text = EMOJI_RE.sub(keep, text).strip()
+    return _casual_punctuation(text) if config.CASUAL_PUNCTUATION else text
+
+
+def _casual_punctuation(text: str) -> str:
+    """逗號改空格、拿掉句號（句中的句號也改成空格）。逐個泡泡、逐行處理。"""
+    def fix(line: str) -> str:
+        line = line.replace("，", " ").replace("。", " ")
+        return re.sub(r"[ 　]{2,}", " ", line).strip()
+
+    # 泡泡內的換行也改成空格，避免 1 個泡泡看起來像兩段
+    bubbles = [" ".join(fix(line) for line in b.split("\n") if line.strip()) for b in text.split("|||")]
+    return "|||".join(b for b in bubbles if b)
 
 
 class Nodes:

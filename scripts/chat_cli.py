@@ -26,6 +26,7 @@ import config  # noqa: E402
 from bot import affection, clock, memory  # noqa: E402
 from bot.db import DB  # noqa: E402
 from bot.graph import Companion  # noqa: E402
+from bot.line_io import split_bubbles  # noqa: E402
 
 USER = "cli-user"
 TEST_DB = config.DATA_DIR / "test_bot.sqlite"
@@ -33,7 +34,7 @@ TEST_GRAPH_DB = config.DATA_DIR / "test_graph.sqlite"
 
 
 def show(text: str):
-    for bubble in [b.strip() for b in text.split("|||") if b.strip()]:
+    for bubble in split_bubbles(text):  # 和 LINE 上一樣的拆法（含合併規則）
         print(f"  姐姐 > {bubble}")
 
 

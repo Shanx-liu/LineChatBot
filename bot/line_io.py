@@ -1,6 +1,7 @@
 """LINE Messaging API（v3 SDK）包裝。"""
 import logging
 import os
+import random
 
 from linebot.v3.messaging import (
     AsyncApiClient, AsyncMessagingApi, Configuration, MarkMessagesAsReadByTokenRequest,
@@ -14,6 +15,8 @@ log = logging.getLogger(__name__)
 
 def split_bubbles(text: str) -> list[str]:
     bubbles = [b.strip() for b in text.split("|||") if b.strip()] or [text.strip() or "……"]
+    if len(bubbles) > 1 and random.random() >= config.TWO_BUBBLE_RATE:
+        return [" ".join(bubbles)]  # 大部分情況合併成 1 個泡泡
     if len(bubbles) > config.MAX_BUBBLES:
         head = bubbles[:config.MAX_BUBBLES - 1]
         bubbles = head + ["\n".join(bubbles[config.MAX_BUBBLES - 1:])]

@@ -1,5 +1,7 @@
 .env
 .vscode
-__pycache__ 
+__pycache__
 .megaignore
 desktop.ini
+data
+start_server.bat

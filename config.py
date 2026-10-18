@@ -12,7 +12,7 @@ TZ = ZoneInfo("Asia/Taipei")
 PORT = 8002
 
 # ---------- 模型 ----------
-CHAT_MODEL = "gpt-4o-mini"          # 回覆用
+CHAT_MODEL = "gpt-5.4-mini"          # 回覆用
 CHAT_TEMPERATURE = 0.9
 ANALYZE_MODEL = "gpt-4o-mini"       # 好感度評分、記憶抽取、摘要用
 EMBED_MODEL = "text-embedding-3-small"
@@ -69,4 +69,6 @@ MARK_AS_READ = True
 READ_DELAY_SEC = (1, 4)                 # 收到訊息後隨機延遲幾秒才已讀
 LOADING_SECONDS = 20                    # 「輸入中」動畫秒數（5~60，5 的倍數）
 REPLY_TOKEN_SAFE_SEC = 50               # 超過這個秒數就改用 push（reply token 1 分鐘失效）
-MAX_BUBBLES = 5                         # LINE 一次 reply 最多 5 則
+MAX_BUBBLES = 2                         # 一次最多幾個泡泡，多出來的併進最後一個（LINE 上限 5）
+TWO_BUBBLE_RATE = 0.3                   # 模型回 2 個以上泡泡時，保留的機率；其餘合併成 1 個（0 = 永遠只回 1 個）
+CASUAL_PUNCTUATION = True               # 年輕人打字習慣：逗號改空格、句尾不加句號（程式強制轉換）
