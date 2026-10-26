@@ -12,7 +12,19 @@ from bot.state import ChatState
 
 
 def _text(msg: BaseMessage) -> str:
-    return msg.content if isinstance(msg.content, str) else str(msg.content)
+    """取出訊息的文字；含圖片的訊息（list content）只取文字部分。"""
+    if isinstance(msg.content, str):
+        return msg.content
+    return " ".join(p.get("text", "") for p in msg.content if isinstance(p, dict) and p.get("type") == "text")
+
+
+def has_image(msg: BaseMessage) -> bool:
+    return isinstance(msg.content, list) and any(
+        isinstance(p, dict) and p.get("type") == "image_url" for p in msg.content)
+
+
+def window_size(chat_type: str) -> int:
+    return config.GROUP_SHORT_TERM_WINDOW if chat_type == "group" else config.SHORT_TERM_WINDOW
 
 
 ALLOWED_EMOJI = {"🤗", "💕", "🌸", "☀", "🍀", "🌙"}
@@ -74,7 +86,7 @@ class Nodes:
     def respond_reply(self, state: ChatState) -> dict:
         user_text = _text(state["messages"][-1])
         system = build_system_prompt(state, clock.now(), user_text)
-        window = state["messages"][-config.SHORT_TERM_WINDOW:]
+        window = state["messages"][-window_size(state["chat_type"]):]
         result = self.chat_llm.invoke([SystemMessage(system), *window])
         return {"messages": [AIMessage(_clean_reply(_text(result)))]}
 
@@ -161,8 +173,29 @@ SUMMARY_PROMPT = """把以下較早的聊天紀錄整理成精簡的摘要（繁
 要併入的對話：
 {dialog}"""
 
+GROUP_SUMMARY_PROMPT = """把以下較早的 LINE 群組聊天紀錄整理成精簡的摘要（繁體中文，250 字以內）。每則訊息前的 [名字] 是發話者，「御姐」是你自己。
+保留：群組在聊的主要話題、誰說了什麼重要的事（寫出名字）、大家和御姐的互動、還沒聊完的事。瑣碎的寒暄、貼圖可以省略。
+{previous}
+要併入的對話：
+{dialog}"""
 
-def summarize_messages(analyze_llm, previous: str, messages: list[BaseMessage]) -> str:
-    dialog = "\n".join(f"{'對方' if isinstance(m, HumanMessage) else '御姐'}：{_text(m)}" for m in messages)
+
+def summarize_messages(analyze_llm, previous: str, messages: list[BaseMessage], chat_type: str = "user") -> str:
+    is_group = chat_type == "group"
+    speaker = "" if is_group else "對方："  # 群組訊息本身已帶 [名字]
+    dialog = "\n".join(f"{speaker}{_text(m)}" if isinstance(m, HumanMessage) else f"御姐：{_text(m)}"
+                       for m in messages)
     prev = f"既有摘要：\n{previous}\n" if previous else ""
-    return _text(analyze_llm.invoke(SUMMARY_PROMPT.format(previous=prev, dialog=dialog))).strip()
+    prompt = (GROUP_SUMMARY_PROMPT if is_group else SUMMARY_PROMPT).format(previous=prev, dialog=dialog)
+    return _text(analyze_llm.invoke(prompt)).strip()
+
+
+DESCRIBE_IMAGE_PROMPT = ("用一句繁體中文客觀描述這張照片的內容（地點、人事物、在做什麼、氛圍），"
+                         "40 字以內，只輸出描述。")
+
+
+def describe_image(analyze_llm, image_msg: BaseMessage) -> str:
+    """把照片描述成一句話，用來取代 thread 裡的原圖（避免之後每次回覆都重送圖片）。"""
+    image_parts = [p for p in image_msg.content if isinstance(p, dict) and p.get("type") == "image_url"]
+    result = analyze_llm.invoke([HumanMessage(content=[{"type": "text", "text": DESCRIBE_IMAGE_PROMPT}, *image_parts])])
+    return _text(result).strip()

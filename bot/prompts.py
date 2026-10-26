@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 
 import config
-from bot.affection import stage_index, stage_of
+from bot.affection import STAGE_NAMES, stage_index, stage_of
 
 
 def _read(name: str) -> str:
@@ -18,10 +18,30 @@ GROUP_STYLE = _read("group_style.md")
 PROACTIVE = _read("proactive.md")
 EXAMPLES = json.loads(_read("examples.json"))["examples"]
 QUOTES = json.loads(_read("quotes.json"))["quotes"]
-STAGE_TEXT = {
-    m.group(1).strip(): m.group(2).strip()
-    for m in re.finditer(r"^## (.+?)\n(.*?)(?=^## |\Z)", _read("affection_levels.md"), re.M | re.S)
-}
+
+
+def _stage_sections(name: str) -> dict[str, str]:
+    """解析以「## 階段名稱」分段的檔案 → {階段名稱: 段落內容}。"""
+    return {
+        m.group(1).strip(): m.group(2).strip()
+        for m in re.finditer(r"^## (.+?)\n(.*?)(?=^## |\Z)", _read(name), re.M | re.S)
+    }
+
+
+STAGE_TEXT = _stage_sections("affection_levels.md")
+BACKSTORY = _stage_sections("backstory.md")
+
+BACKSTORY_RULES = """以下是你自己的經歷與日常，是你真實的記憶。
+- 他問到或話題相關時，才自然地分享，一次只說一點，不要一口氣把故事全說完。
+- 越私密的事越要看氣氛，可以先欲言又止，等他追問再說。
+- 他問到這裡沒寫的、更私人的事，就俏皮地帶過（「這個嘛 等你更了解姐姐再說」），不要編造。"""
+
+
+def backstory_text(stage: str, is_group: bool) -> str:
+    """依目前階段累積放入故事段落；群組只放公開的部分。"""
+    upto = 0 if is_group else stage_index(stage)
+    sections = [BACKSTORY[name] for name in STAGE_NAMES[:upto + 1] if name in BACKSTORY]
+    return "\n\n".join(sections)
 
 SCENARIO_KEYWORDS = {
     "flirt": ["想你", "抱抱", "喜歡你", "愛你", "漂亮", "親親", "好美", "約會", "想見你", "吃醋"],
@@ -105,6 +125,7 @@ def build_system_prompt(state: dict, now: datetime, user_text: str = "") -> str:
     if is_group:
         parts.append(GROUP_STYLE)
     parts.append(f"# 目前好感度階段：{stage}\n{STAGE_TEXT.get(stage, '')}")
+    parts.append(f"# 你自己的故事\n{BACKSTORY_RULES}\n\n{backstory_text(stage, is_group)}")
     if state["mode"] == "proactive":
         trigger = TRIGGER_TEXT.get(state.get("trigger") or "miss", state.get("trigger"))
         detail = state.get("trigger_detail") or ""

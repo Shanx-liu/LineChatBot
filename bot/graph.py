@@ -3,8 +3,10 @@
                   ┌── reply ─────> respond_reply ─────┐
 START → load_context                                    ├─> END
                   └── proactive ─> respond_proactive ─┘
-（graph 外，回覆送出後）after_reply：post_process（好感度、記憶）→ 視情況 summarize
+（graph 外，回覆送出後）compact_image（有照片時）→ post_process（好感度、記憶）→ 視情況 summarize
+群組裡沒 @ 她的訊息：append_context 直接寫進群組 thread（不呼叫 LLM、不影響好感度）
 """
+import base64
 import logging
 import sqlite3
 
@@ -37,7 +39,7 @@ class Companion:
         self.store = SqliteStore(store_conn, index={
             "dims": config.EMBED_DIMS,
             "embed": OpenAIEmbeddings(model=config.EMBED_MODEL),
-            "fields": ["text"],
+            "text_fields": ["text"],  # SqliteStore 用 text_fields（不是 fields），否則會把整筆 JSON 拿去算向量
         })
         self.store.setup()
         saver_conn = sqlite3.connect(graph_db_path, check_same_thread=False)
@@ -59,9 +61,17 @@ class Companion:
     def _config(chat_type: str, chat_id: str) -> dict:
         return {"configurable": {"thread_id": thread_id(chat_type, chat_id)}}
 
-    def reply(self, *, chat_type: str, chat_id: str, speaker_id: str | None, text: str) -> str:
+    def reply(self, *, chat_type: str, chat_id: str, speaker_id: str | None, text: str,
+              image: bytes | None = None) -> str:
+        if image:
+            mime = "image/png" if image.startswith(b"\x89PNG") else "image/jpeg"
+            url = f"data:{mime};base64,{base64.b64encode(image).decode()}"
+            msg = HumanMessage(content=[{"type": "text", "text": text},
+                                        {"type": "image_url", "image_url": {"url": url, "detail": config.IMAGE_DETAIL}}])
+        else:
+            msg = HumanMessage(text)
         out = self.graph.invoke(
-            {"messages": [HumanMessage(text)], "mode": "reply", "chat_type": chat_type,
+            {"messages": [msg], "mode": "reply", "chat_type": chat_type,
              "chat_id": chat_id, "speaker_id": speaker_id, "trigger": None, "trigger_detail": None},
             self._config(chat_type, chat_id),
         )
@@ -95,14 +105,33 @@ class Companion:
         self.summarize_if_needed(kwargs["chat_type"], kwargs["chat_id"])
         return result
 
+    def compact_image(self, chat_type: str, chat_id: str) -> str | None:
+        """把 thread 裡最後一張照片換成一句文字描述，回傳替換後的文字。"""
+        cfg = self._config(chat_type, chat_id)
+        messages = self.graph.get_state(cfg).values.get("messages", [])
+        target = next((m for m in reversed(messages) if nodes.has_image(m)), None)
+        if target is None:
+            return None
+        text = f"（傳了一張照片：{nodes.describe_image(self.analyze_llm, target)}）"
+        # 同一個 id 的訊息會被取代，而不是新增
+        self.graph.update_state(cfg, {"messages": [HumanMessage(content=text, id=target.id)]}, as_node="respond_reply")
+        log.info("compact_image %s: %s", thread_id(chat_type, chat_id), text)
+        return text
+
+    def append_context(self, chat_id: str, text: str) -> None:
+        """群組裡沒 @ 她的訊息：直接寫進群組 thread 當上下文，不呼叫 LLM。"""
+        self.graph.update_state(self._config("group", chat_id), {"messages": [HumanMessage(text)]},
+                                as_node="respond_reply")
+
     def summarize_if_needed(self, chat_type: str, chat_id: str) -> bool:
         cfg = self._config(chat_type, chat_id)
         values = self.graph.get_state(cfg).values
         messages = values.get("messages", [])
-        if len(messages) <= config.SUMMARIZE_AT:
+        limit = config.GROUP_SUMMARIZE_AT if chat_type == "group" else config.SUMMARIZE_AT
+        if len(messages) <= limit:
             return False
-        older = messages[:-config.SHORT_TERM_WINDOW]
-        summary = nodes.summarize_messages(self.analyze_llm, values.get("summary", ""), older)
+        older = messages[:-nodes.window_size(chat_type)]
+        summary = nodes.summarize_messages(self.analyze_llm, values.get("summary", ""), older, chat_type)
         self.graph.update_state(
             cfg, {"summary": summary, "messages": [RemoveMessage(id=m.id) for m in older]},
             as_node="respond_reply",

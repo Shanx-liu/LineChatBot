@@ -96,40 +96,68 @@ def _chat_of(source) -> tuple[str, str]:
     return "user", source.user_id
 
 
-def _message_text(message, chat_type: str) -> str | None:
+def _message_text(message, chat_type: str) -> tuple[str | None, bool]:
+    """回傳 (文字, 是否在跟她說話)。一對一一定是在跟她說話；群組要 @ 她才算。"""
+    is_user = chat_type == "user"
     if isinstance(message, TextMessageContent):
-        if chat_type == "group":
-            return strip_mentions(message) if is_mentioned(message) else None
-        return message.text
-    if chat_type == "user":
-        if isinstance(message, StickerMessageContent):
-            return "（傳了一張貼圖）"
-        if isinstance(message, ImageMessageContent):
-            return "（傳了一張照片）"
-    return None
+        if is_user:
+            return message.text, True
+        mentioned = is_mentioned(message)
+        return (strip_mentions(message) if mentioned else message.text), mentioned
+    if isinstance(message, StickerMessageContent):
+        return "（傳了一張貼圖）", is_user
+    if isinstance(message, ImageMessageContent):
+        return "（傳了一張照片）", is_user
+    return None, False
+
+
+async def _speaker_name(user_id: str | None, group_id: str) -> str:
+    """群組發話者名稱，查過一次就存在 users.display_name。"""
+    db = deps["db"]
+    if not user_id:
+        return "某人"
+    user = db.get_user(user_id)
+    if not user["display_name"]:
+        name = await deps["line"].display_name(user_id, group_id)
+        db.update_user(user_id, display_name=name)
+        return name or "某人"
+    return user["display_name"]
+
+
+async def record_group_context(chat_id: str, user_id: str | None, text: str):
+    """群組裡沒 @ 她的訊息：只當群組上下文，不進個人記憶、不影響好感度。"""
+    companion = deps["companion"]
+    line_text = f"[{await _speaker_name(user_id, chat_id)}] {text}"
+    async with chat_locks[thread_id("group", chat_id)]:
+        await asyncio.to_thread(companion.append_context, chat_id, line_text)
+        await asyncio.to_thread(companion.summarize_if_needed, "group", chat_id)
 
 
 async def handle_message(event: MessageEvent):
     db, line, companion = deps["db"], deps["line"], deps["companion"]
     chat_type, chat_id = _chat_of(event.source)
     user_id = getattr(event.source, "user_id", None)
-    text = _message_text(event.message, chat_type)
-    if text is None:  # 群組沒 @ 她、或不支援的訊息類型
+    text, addressed = _message_text(event.message, chat_type)
+    if text is None:  # 不支援的訊息類型
+        return
+    if not addressed:  # 群組裡沒 @ 她
+        if config.GROUP_CONTEXT_ENABLED:
+            await record_group_context(chat_id, user_id, text)
         return
     started = time.monotonic()
 
     if user_id:
-        user = db.get_user(user_id)
+        db.get_user(user_id)
         if chat_type == "user":
             db.update_user(user_id, is_friend=1)
-        elif not user["display_name"]:
-            db.update_user(user_id, display_name=await line.display_name(user_id, chat_id))
         db.record_user_message(user_id, clock.now())
 
+    image = None
     if chat_type == "group":
-        name = (db.get_user(user_id)["display_name"] if user_id else None) or "某人"
-        text = f"[{name}] {text}"
+        text = f"[{await _speaker_name(user_id, chat_id)}] {text}"
     else:
+        if config.IMAGE_ENABLED and isinstance(event.message, ImageMessageContent):
+            image = await line.get_image(event.message.id)
         token = getattr(event.message, "mark_as_read_token", None)
         if config.MARK_AS_READ and token:
             await asyncio.sleep(random.uniform(*config.READ_DELAY_SEC))
@@ -139,9 +167,12 @@ async def handle_message(event: MessageEvent):
     lock = chat_locks[thread_id(chat_type, chat_id)]
     async with lock:
         reply = await asyncio.to_thread(companion.reply, chat_type=chat_type, chat_id=chat_id,
-                                        speaker_id=user_id, text=text)
+                                        speaker_id=user_id, text=text, image=image)
     await send_reply(event.reply_token, chat_id, split_bubbles(reply), time.monotonic() - started)
 
+    if image:  # 把 thread 裡的原圖換成文字描述，記憶抽取也用這段描述
+        async with lock:
+            text = await asyncio.to_thread(companion.compact_image, chat_type, chat_id) or text
     await asyncio.to_thread(companion.post_process, chat_type=chat_type, chat_id=chat_id,
                             speaker_id=user_id, user_text=text, ai_text=reply)
     async with lock:

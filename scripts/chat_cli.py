@@ -8,6 +8,10 @@
   /summary           看目前摘要與 thread 訊息數
   /day 3             時鐘快轉 3 天（測門檻、衰減）
   /proactive [miss|birthday|event|welcome] [補充說明]
+  /img 圖片路徑       傳一張本機圖片給她
+  /g 名字 內容        模擬群組裡沒 @ 她的訊息（只記成上下文）
+  /g@ 名字 內容       模擬群組裡 @ 她（以 CLI 使用者的身分）
+  /gsum              看群組訊息數與摘要
   /quit
 """
 import logging
@@ -29,6 +33,7 @@ from bot.graph import Companion  # noqa: E402
 from bot.line_io import split_bubbles  # noqa: E402
 
 USER = "cli-user"
+GROUP = "cli-group"
 TEST_DB = config.DATA_DIR / "test_bot.sqlite"
 TEST_GRAPH_DB = config.DATA_DIR / "test_graph.sqlite"
 
@@ -87,19 +92,40 @@ def main():
             elif cmd == "/proactive":
                 trigger = args[0] if args else "miss"
                 show(bot.proactive(user_id=USER, trigger=trigger, detail=args[1] if len(args) > 1 else None))
+            elif cmd == "/img":
+                path = Path(text.split(maxsplit=1)[1].strip().strip('"'))
+                converse(bot, db, "user", USER, "（傳了一張照片）", image=path.read_bytes())
+            elif cmd == "/g":  # 群組裡沒 @ 她：只記成上下文
+                bot.append_context(GROUP, f"[{args[0]}] {args[1]}")
+                if bot.summarize_if_needed("group", GROUP):
+                    print("  [群組已壓縮摘要]")
+                print("  （已記入群組上下文，好感度不變）")
+            elif cmd == "/g@":  # 群組裡 @ 她：以 CLI 使用者的身分發言
+                converse(bot, db, "group", GROUP, f"[{args[0]}] {args[1]}")
+            elif cmd == "/gsum":
+                values = bot.history("group", GROUP)
+                print(f"  群組訊息數 {len(values.get('messages', []))}｜摘要：{values.get('summary') or '（無）'}")
             else:
                 print("  未知指令")
             continue
 
-        db.record_user_message(USER, clock.now())
-        reply = bot.reply(chat_type="user", chat_id=USER, speaker_id=USER, text=text)
-        show(reply)
-        result = bot.after_reply(chat_type="user", chat_id=USER, speaker_id=USER, user_text=text, ai_text=reply)
-        if result:
-            extra = f"｜記住 {result['memories_added']} 件" if result["memories_added"] else ""
-            prof = f"｜資料 {result['profile']}" if result["profile"] else ""
-            print(f"  [評分 {result['delta']:+d}→實際 {result['applied']:+d}｜{result['reason']}{prof}{extra}]")
-            status(db)
+        converse(bot, db, "user", USER, text)
+
+
+def converse(bot, db, chat_type: str, chat_id: str, text: str, image: bytes | None = None):
+    """和 server 相同的流程：記錄 → 回覆 → （圖片換成描述）→ 評分與記憶 → 摘要。"""
+    db.record_user_message(USER, clock.now())
+    reply = bot.reply(chat_type=chat_type, chat_id=chat_id, speaker_id=USER, text=text, image=image)
+    show(reply)
+    if image:
+        text = bot.compact_image(chat_type, chat_id) or text
+        print(f"  [thread 中的照片已換成：{text}]")
+    result = bot.after_reply(chat_type=chat_type, chat_id=chat_id, speaker_id=USER, user_text=text, ai_text=reply)
+    if result:
+        extra = f"｜記住 {result['memories_added']} 件" if result["memories_added"] else ""
+        prof = f"｜資料 {result['profile']}" if result["profile"] else ""
+        print(f"  [評分 {result['delta']:+d}→實際 {result['applied']:+d}｜{result['reason']}{prof}{extra}]")
+        status(db)
 
 
 if __name__ == "__main__":

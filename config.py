@@ -22,6 +22,15 @@ EMBED_DIMS = 1536
 SHORT_TERM_WINDOW = 30   # 每次回覆帶入最近幾則訊息
 SUMMARIZE_AT = 60        # thread 超過幾則時，把較舊的訊息壓縮成摘要
 
+# ---------- 群組上下文 ----------
+GROUP_CONTEXT_ENABLED = True    # 群組裡沒 @ 她的訊息也記進群組對話紀錄（不進個人記憶、不影響好感度）
+GROUP_SHORT_TERM_WINDOW = 40    # 群組每次回覆帶入最近幾則訊息
+GROUP_SUMMARIZE_AT = 100        # 群組 thread 超過幾則時壓縮摘要
+
+# ---------- 圖片 ----------
+IMAGE_ENABLED = True            # 一對一時看得懂使用者傳的照片
+IMAGE_DETAIL = "low"            # "low" 便宜、"high" 看得清楚細節（費用較高）
+
 # ---------- 長期記憶 ----------
 MEMORY_TOP_K = 5         # 每次回覆從記憶庫取最相關的幾筆
 

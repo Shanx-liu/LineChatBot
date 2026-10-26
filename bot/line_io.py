@@ -4,7 +4,7 @@ import os
 import random
 
 from linebot.v3.messaging import (
-    AsyncApiClient, AsyncMessagingApi, Configuration, MarkMessagesAsReadByTokenRequest,
+    AsyncApiClient, AsyncMessagingApi, AsyncMessagingApiBlob, Configuration, MarkMessagesAsReadByTokenRequest,
     PushMessageRequest, ReplyMessageRequest, ShowLoadingAnimationRequest, TextMessage,
 )
 
@@ -43,6 +43,15 @@ class LineIO:
         cfg = Configuration(access_token=os.getenv("CHANNEL_ACCESS_TOKEN"))
         self.client = AsyncApiClient(cfg)
         self.api = AsyncMessagingApi(self.client)
+        self.blob = AsyncMessagingApiBlob(self.client)
+
+    async def get_image(self, message_id: str) -> bytes | None:
+        """下載使用者傳的圖片（LINE 只保留一段時間，要在收到後盡快下載）。"""
+        try:
+            return bytes(await self.blob.get_message_content(message_id))
+        except Exception as e:
+            log.warning("get_image failed: %s", e)
+            return None
 
     async def close(self):
         await self.client.close()
